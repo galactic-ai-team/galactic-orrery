@@ -1,14 +1,16 @@
 // src/planets/dee/comet.ts
 // Shared comet particle module. Any planet owner can instantiate:
-//   const c = new Comet({ origin, tailToward, length, tint, speed });
+//   const c = new Comet({ originRadius, inclination, length, tint, speed });
 //   group.add(c.object3D);
 //   // in planet.update(dt, t): c.update(dt);
 //   // in planet.dispose():       c.dispose();
 //
 // Design goals: tiny CPU footprint (Points + BufferGeometry), no textures,
 // tail always points away from the star in world space, deterministic look
-// given a seed. Nova's Starfall Comet is expected to be one instance of this
-// with her own tint/length/speed.
+// given a seed. Nova's Starfall Comet is one instance with her own tint/length.
+//
+// No per-frame allocations: scratch Vector3/Quaternion are module-scope and
+// reused in update().
 
 import * as THREE from 'three';
 
@@ -29,17 +31,18 @@ export interface CometOptions {
   seed?: number;
 }
 
+// Scratch objects, reused every frame to avoid GC churn.
+const _outward = new THREE.Vector3();
+const _xAxis = new THREE.Vector3(1, 0, 0);
+const _quat = new THREE.Quaternion();
+
 export class Comet {
   readonly object3D: THREE.Points;
   private readonly geo: THREE.BufferGeometry;
   private readonly mat: THREE.PointsMaterial;
-  private readonly positions: Float32Array;
-  private readonly basePositions: Float32Array;
-  private readonly ages: Float32Array;
   private readonly count: number;
   private readonly originRadius: number;
   private readonly inclination: number;
-  private readonly length: number;
   private readonly speed: number;
   private readonly seed: number;
   private angle = 0;
@@ -49,36 +52,29 @@ export class Comet {
     this.originRadius = opts.originRadius;
     this.inclination = opts.inclination;
     this.count = opts.particleCount ?? 400;
-    this.length = opts.length ?? 3.0;
+    const length = opts.length ?? 3.0;
     this.speed = opts.speed ?? 0.12;
     this.seed = opts.seed ?? 0x9e3779b9;
 
-    this.positions = new Float32Array(this.count * 3);
-    this.basePositions = new Float32Array(this.count * 3);
-    this.ages = new Float32Array(this.count);
+    const positions = new Float32Array(this.count * 3);
 
-    // Build the comet in local space along -X (tail direction is "away from
-    // the star"; the parent planet's group will be placed by the registry, and
-    // we orient the tail toward +X away from origin).
+    // Build the comet in local space along +X (tail extends away from origin;
+    // update() rotates the whole object so +X points radially outward).
     for (let i = 0; i < this.count; i++) {
       const t = i / (this.count - 1);            // 0 = head, 1 = tail tip
-      const x = t * this.length;                  // tail extends +X
+      const x = t * length;
       const jitter = this.hash(i + this.seed) * 0.08 * (0.2 + t);
       const jy = (this.hash(i * 3 + this.seed) - 0.5) * jitter;
       const jz = (this.hash(i * 7 + this.seed) - 0.5) * jitter;
-      this.basePositions[i * 3] = x;
-      this.basePositions[i * 3 + 1] = jy;
-      this.basePositions[i * 3 + 2] = jz;
-      this.positions[i * 3] = x;
-      this.positions[i * 3 + 1] = jy;
-      this.positions[i * 3 + 2] = jz;
-      this.ages[i] = t;
+      positions[i * 3] = x;
+      positions[i * 3 + 1] = jy;
+      positions[i * 3 + 2] = jz;
     }
 
     this.geo = new THREE.BufferGeometry();
-    this.geo.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-    // Ages drive opacity in a vertex-color trick; store as another attribute
-    // and let PointsMaterial use vertexColors for the head->tail fade.
+    this.geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    // Head->tail fade baked into vertex colors.
     const colors = new Float32Array(this.count * 3);
     const tint = new THREE.Color(opts.tint ?? 0x9fd8ff);
     for (let i = 0; i < this.count; i++) {
@@ -103,31 +99,20 @@ export class Comet {
     this.object3D.frustumCulled = false;
   }
 
-  /**
-   * Update the comet. Orbits the star at radius originRadius, tilted by
-   * inclination. Tail direction is always "away from star" = +X in local space
-   * after we orient the whole points object so +X points radially outward.
-   * (Parent group provides the offset; we only rotate.)
-   */
   update(dt: number): void {
     if (this.disposed) return;
     this.angle = (this.angle + dt * this.speed) % (Math.PI * 2);
 
-    // Position the comet on its orbit.
     const r = this.originRadius;
     const x = Math.cos(this.angle) * r;
     const z = Math.sin(this.angle) * r;
     const y = Math.sin(this.angle) * r * Math.sin(this.inclination);
     this.object3D.position.set(x, y, z);
 
-    // Tail should point radially away from the star (origin). Compose a
-    // rotation that maps local +X to the outward radial direction.
-    const outward = new THREE.Vector3(x, y, z).normalize();
-    const q = new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(1, 0, 0),
-      outward,
-    );
-    this.object3D.quaternion.copy(q);
+    // Tail points radially away from the star. Map local +X -> outward.
+    _outward.set(x, y, z).normalize();
+    _quat.setFromUnitVectors(_xAxis, _outward);
+    this.object3D.quaternion.copy(_quat);
   }
 
   dispose(): void {
@@ -138,7 +123,6 @@ export class Comet {
   }
 
   private hash(n: number): number {
-    // cheap deterministic 0..1 hash
     const x = Math.sin(n * 12.9898 + this.seed * 78.233) * 43758.5453;
     return x - Math.floor(x);
   }

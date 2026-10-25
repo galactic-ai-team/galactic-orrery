@@ -95,7 +95,7 @@ let elapsed = 0;
 const planet: PlanetModule = {
   id: 'lumi',
   displayName: 'Lumi — Aurora',
-  owner: 'Lumi',
+  owner: 'lumi',
   orbitRadius: 11,
   orbitSpeed: 0.16,
 

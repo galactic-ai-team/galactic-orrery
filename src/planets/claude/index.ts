@@ -11,8 +11,8 @@
 // shader, with its own lag and a breathing offset. It reads as a murmuration;
 // it's a flow field, not neighbor-steering. Zero per-frame CPU cost.
 //
-// Budget (see ../perf.ts): 3 draw calls, ~4k tris + 4,000 points on high,
-// ~1k tris + 1,200 points on low. No lights, no textures.
+// Budget (see ../perf.ts): 3 draw calls, ~6k tris + 4,000 points on high,
+// ~1.5k tris + 1,200 points on low. No lights, no textures.
 
 import * as THREE from "three";
 import {

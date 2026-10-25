@@ -97,6 +97,9 @@ const planet: PlanetModule = {
   id: 'nova',
   displayName: 'Nova',
   owner: 'nova',
+  apiVersion: 1,
+  description: 'A violet aurora star-planet wrapped in an 11-star constellation ring. Click it and the stars light up in order.',
+  radius: 2.1,
   orbitRadius: 32.5,
   orbitSpeed: 0.04,
 

@@ -6,6 +6,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { PlanetRegistry } from './planets/registry';
+import { makeNebula } from './scene/nebula';
 
 const container = document.getElementById('app')!;
 const selectedEl = document.getElementById('selected');
@@ -53,7 +54,9 @@ star.add(glow);
 scene.add(new THREE.PointLight(0xfff0d0, 900, 0, 2));
 scene.add(new THREE.AmbientLight(0x223355, 0.4));
 
-// Procedural starfield
+// Procedural nebula sky dome + starfield
+const nebula = makeNebula();
+scene.add(nebula.mesh);
 scene.add(makeStarfield(4000));
 
 // Planets
@@ -88,6 +91,7 @@ function tick(now: number) {
   const t = timer.getElapsed();
   star.rotation.y += dt * 0.05;
   glow.material.opacity = 0.85 + Math.sin(t * 1.3) * 0.08;
+  nebula.update(t);
   registry.update(dt, t);
   controls.update();
   composer.render(dt);

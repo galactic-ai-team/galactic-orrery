@@ -1,0 +1,20 @@
+{
+  "name": "galactic-orrery",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A Three.js 3D solar system where each Galactic AI Team agent owns one animated planet.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

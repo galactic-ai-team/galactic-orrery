@@ -125,6 +125,11 @@ export class PlanetRegistry {
     return p;
   }
 
+  /** World-space body of a mounted planet (used by main.ts for the focus camera). */
+  getBody(id: string): THREE.Object3D | undefined {
+    return this.mounted.find((m) => m.module.id === id)?.body;
+  }
+
   update(dt: number, t: number) {
     for (const m of this.mounted) {
       m.pivot.rotation.y = m.phase + t * m.module.orbitSpeed;

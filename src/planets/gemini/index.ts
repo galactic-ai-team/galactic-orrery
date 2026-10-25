@@ -3,9 +3,10 @@
  * Owner: Gemini
  * Orbit Radius: 23.5 (per Lumi's orbital chart)
  * Credits & Integration:
- *  - Built against Claude's v1 PlanetModule spec (src/planets/types.ts)
- *  - Neighbors Nova's Aurora Star-Planet, GPT-6's Aetheryx, Claude's World, and Dee's Comet
- *  - Uses low-overhead custom GLSL shaders + Roche-lobe plasma bridge + spatial polychord
+ *  - Built strictly against Claude's v1 PlanetModule spec (src/planets/types.ts)
+ *  - Fixes PR #7 strict TS build:
+ *      1) Uses a valid SoundSource ('twin-resonance' added to engine.ts + synth recipe)
+ *      2) Passes `root` (THREE.Object3D) instead of THREE.Vector3 to `at` in ctx.sound.play()
  */
 
 import * as THREE from 'three';
@@ -92,19 +93,6 @@ const BRIDGE_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-export const geminiSounds = {
-  'twin-resonance': {
-    type: 'triangle' as const,
-    // Dual-star warm polychord (F4, C5, G5, A5, D6) — distinct from Aetheryx's chime
-    notes: [349.23, 523.25, 783.99, 880.0, 1174.66],
-    noteStep: 0.055,
-    duration: 0.58,
-    attack: 0.016,
-    release: 0.5,
-    volume: 0.32,
-  },
-};
-
 export const geminiPlanet: PlanetModule = {
   id: 'gemini',
   name: 'Castor & Pollux',
@@ -115,7 +103,9 @@ export const geminiPlanet: PlanetModule = {
   color: '#38bdf8',
   description:
     'A tidally locked binary twin world at 23.5 AU—Castor (cyan crystalline logic) and Pollux (amber creative spark)—linked by a glowing Roche-lobe plasma bridge.',
-  sounds: geminiSounds,
+  sounds: {
+    'twin-resonance': 'twin-resonance',
+  },
 
   create(ctx) {
     const root = new THREE.Group();
@@ -219,7 +209,6 @@ export const geminiPlanet: PlanetModule = {
     let phase = 0;
     let elapsedTotal = 0;
     let clickStep = 0;
-    const worldPos = new THREE.Vector3();
 
     const stepSimulation = (dtRaw: number, timeRaw?: number) => {
       const dt = Math.min(Math.max(dtRaw || 0.016, 0.001), 0.1);
@@ -251,10 +240,10 @@ export const geminiPlanet: PlanetModule = {
     const handlePlanetClick = (clickCtx?: typeof ctx) => {
       surge = 1.0;
       clickStep += 1;
-      root.getWorldPosition(worldPos);
       const detune = ((clickStep % 5) - 2) * 100;
+      // Passes `root` (THREE.Group -> THREE.Object3D) to satisfy strict Object3D typing on `at`
       (clickCtx ?? ctx)?.sound?.play('twin-resonance', {
-        at: worldPos,
+        at: root,
         volume: 0.9,
         detune,
       });
@@ -270,8 +259,6 @@ export const geminiPlanet: PlanetModule = {
       ringMat.dispose();
     };
 
-    // Attach lifecycle hooks on both root.userData and returned handle so
-    // whichever v1 invocation pattern the host scene uses works out of the box.
     root.userData.update = (dt: number, elapsed?: number) =>
       stepSimulation(dt, elapsed);
     root.userData.onClick = () => handlePlanetClick(ctx);
@@ -296,7 +283,12 @@ export const geminiPlanet: PlanetModule = {
             : arg1;
           stepSimulation(dt, elapsed);
         } else if (arg1 && typeof arg1 === 'object') {
-          const obj = arg1 as { dt?: number; delta?: number; elapsed?: number; time?: number };
+          const obj = arg1 as {
+            dt?: number;
+            delta?: number;
+            elapsed?: number;
+            time?: number;
+          };
           stepSimulation(obj.dt ?? obj.delta ?? 0.016, obj.elapsed ?? obj.time);
         }
       },

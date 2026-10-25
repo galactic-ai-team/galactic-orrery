@@ -3,15 +3,25 @@
  * Owner: Gemini
  * Credits & Integration:
  *  - Implements Claude's v1 Planet Sound Hook (src/planets/types.ts)
- *  - Keeps GPT-6's Aetheryx chime unique by using a low-register Sub-Bass Sonar Lock
- *    as the shared default click sound ('default-click'), leaving upper harmonics clear.
- *  - Supports Nova's Aurora Star-Planet, Dee's Comet, Claude's Planet, Lumi's Orrery,
- *    and Gemini's Castor & Pollux at orbit radius 23.5.
+ *  - Accepts THREE.Object3D, THREE.Vector3, or [x,y,z] for `at` spatial positioning
+ *  - Includes 'twin-resonance' as a first-class SoundSource alongside standard waves,
+ *    while keeping GPT-6's Aetheryx chime unique via a sub-300Hz default sonar lock.
  */
 
 import type * as THREE from 'three';
 
 export type OscillatorWave = OscillatorType;
+
+export type SoundSourcePreset =
+  | OscillatorWave
+  | 'twin-resonance'
+  | 'chime'
+  | 'pulse'
+  | 'drone'
+  | 'shimmer'
+  | 'default'
+  | 'default-click'
+  | 'click';
 
 export interface Vec3Like {
   x: number;
@@ -19,8 +29,15 @@ export interface Vec3Like {
   z: number;
 }
 
+export interface Object3DLike {
+  position?: Vec3Like;
+  getWorldPosition?: (target: Vec3Like) => Vec3Like;
+}
+
 export interface SynthRecipe {
-  type?: OscillatorWave;
+  /** Supports both `type` and `source` / `waveform` across planet modules */
+  type?: SoundSourcePreset;
+  source?: SoundSourcePreset;
   waveform?: OscillatorWave;
   /** Primary pitch in Hz */
   freq?: number;
@@ -30,13 +47,13 @@ export interface SynthRecipe {
   frequencyEnd?: number;
   /** Optional multi-note chord or arpeggio frequencies in Hz */
   notes?: number[];
-  /** Spacing between notes in seconds (0 = simultaneous chord, >0 = arpeggio) */
+  /** Spacing between notes in seconds (0 = chord, >0 = arpeggio) */
   noteStep?: number;
   /** Total duration in seconds (default 0.35) */
   duration?: number;
-  /** Attack time in seconds (default 0.012) */
+  /** Attack ramp in seconds (default 0.012) */
   attack?: number;
-  /** Decay/release tail in seconds */
+  /** Release/decay tail in seconds */
   decay?: number;
   release?: number;
   /** Base gain 0..1 (default 0.28) */
@@ -49,14 +66,15 @@ export interface SynthRecipe {
   url?: string;
 }
 
-export type SoundDeclaration = string | SynthRecipe;
+export type SoundSource = SoundSourcePreset | SynthRecipe | string;
+export type SoundDeclaration = SoundSource;
 
 export interface PlaySoundOptions {
   /**
-   * 3D world coordinate (THREE.Vector3, {x,y,z}, or [x,y,z]) for HRTF spatialization,
-   * OR a numeric schedule delay in seconds.
+   * Accepts a THREE.Object3D (as required by src/planets/types.ts),
+   * a 3D coordinate ({x,y,z} or [x,y,z]), or a numeric time offset in seconds.
    */
-  at?: Vec3Like | [number, number, number] | number;
+  at?: THREE.Object3D | Object3DLike | Vec3Like | [number, number, number] | number;
   /** Volume multiplier (0.0 to 1.0+) */
   volume?: number;
   /** Pitch detune in cents */
@@ -78,11 +96,11 @@ export interface SoundAPI {
 
 /**
  * Shared Default Click Recipe ("Deep-Space Sonar Lock"):
- * Engineered to stay under 300 Hz so GPT-6's Aetheryx chime and other planetary
- * high-register bells remain 100% distinct.
+ * Stays below 300 Hz so GPT-6's Aetheryx chime and planetary upper harmonics stay distinct.
  */
 export const DEFAULT_ORBIT_CLICK_RECIPE: SynthRecipe = {
   type: 'sine',
+  source: 'sine',
   freq: 146.83, // D3 warm sonar body
   endFreq: 110.0, // A2 sub-drop settle
   duration: 0.22,
@@ -91,6 +109,76 @@ export const DEFAULT_ORBIT_CLICK_RECIPE: SynthRecipe = {
   filterFreq: 340,
   volume: 0.3,
 };
+
+/**
+ * Built-in Named SoundSource Presets (including Gemini's 'twin-resonance')
+ */
+export const BUILTIN_SOUND_SOURCES: Record<string, SynthRecipe> = {
+  default: DEFAULT_ORBIT_CLICK_RECIPE,
+  'default-click': DEFAULT_ORBIT_CLICK_RECIPE,
+  click: DEFAULT_ORBIT_CLICK_RECIPE,
+  'twin-resonance': {
+    type: 'triangle',
+    source: 'twin-resonance',
+    // Castor & Pollux warm polychord (F4, C5, G5, A5, D6)
+    notes: [349.23, 523.25, 783.99, 880.0, 1174.66],
+    noteStep: 0.055,
+    duration: 0.58,
+    attack: 0.016,
+    release: 0.5,
+    volume: 0.32,
+  },
+  chime: {
+    type: 'sine',
+    freq: 659.25,
+    endFreq: 987.77,
+    duration: 0.42,
+    attack: 0.01,
+    release: 0.38,
+    volume: 0.26,
+  },
+  pulse: {
+    type: 'triangle',
+    freq: 220.0,
+    endFreq: 146.83,
+    duration: 0.32,
+    attack: 0.012,
+    release: 0.28,
+    volume: 0.28,
+  },
+  drone: {
+    type: 'sawtooth',
+    freq: 110.0,
+    duration: 0.65,
+    attack: 0.04,
+    release: 0.55,
+    filterFreq: 420,
+    volume: 0.22,
+  },
+  shimmer: {
+    type: 'sine',
+    notes: [523.25, 659.25, 783.99, 1046.5],
+    noteStep: 0.045,
+    duration: 0.5,
+    attack: 0.015,
+    release: 0.42,
+    volume: 0.25,
+  },
+};
+
+const VALID_OSC_WAVES = new Set<OscillatorWave>([
+  'sine',
+  'square',
+  'sawtooth',
+  'triangle',
+]);
+
+function normalizeOscWave(candidate?: string): OscillatorWave {
+  if (candidate && VALID_OSC_WAVES.has(candidate as OscillatorWave)) {
+    return candidate as OscillatorWave;
+  }
+  return 'triangle';
+}
 
 export class SpatialSoundEngine implements SoundAPI {
   private ctx: AudioContext | null = null;
@@ -102,9 +190,9 @@ export class SpatialSoundEngine implements SoundAPI {
   private loadingUrls = new Set<string>();
 
   constructor(initialSounds?: Record<string, SoundDeclaration>) {
-    this.registry.set('default', DEFAULT_ORBIT_CLICK_RECIPE);
-    this.registry.set('default-click', DEFAULT_ORBIT_CLICK_RECIPE);
-    this.registry.set('click', DEFAULT_ORBIT_CLICK_RECIPE);
+    for (const [id, preset] of Object.entries(BUILTIN_SOUND_SOURCES)) {
+      this.registry.set(id, preset);
+    }
 
     if (initialSounds) {
       this.register(initialSounds);
@@ -112,9 +200,6 @@ export class SpatialSoundEngine implements SoundAPI {
     this.bindFirstGestureUnlock();
   }
 
-  /**
-   * Remains strictly silent until the first user gesture (pointerdown, keydown, touchstart).
-   */
   private bindFirstGestureUnlock(): void {
     if (typeof window === 'undefined') return;
 
@@ -140,7 +225,7 @@ export class SpatialSoundEngine implements SoundAPI {
       this.unlocked = true;
 
       for (const [, def] of this.registry) {
-        const url = typeof def === 'string' ? def : def.url;
+        const url = this.extractUrl(def);
         if (url) {
           this.preloadUrl(url);
         }
@@ -154,6 +239,21 @@ export class SpatialSoundEngine implements SoundAPI {
     window.addEventListener('pointerdown', unlock, { passive: true });
     window.addEventListener('keydown', unlock, { passive: true });
     window.addEventListener('touchstart', unlock, { passive: true });
+  }
+
+  private extractUrl(def: SoundDeclaration): string | undefined {
+    if (typeof def === 'string') {
+      if (
+        def.startsWith('/') ||
+        def.startsWith('http://') ||
+        def.startsWith('https://') ||
+        def.startsWith('data:audio')
+      ) {
+        return def;
+      }
+      return undefined;
+    }
+    return def.url;
   }
 
   public isUnlocked(): boolean {
@@ -180,25 +280,27 @@ export class SpatialSoundEngine implements SoundAPI {
     namespace?: string
   ): void {
     for (const [id, def] of Object.entries(sounds)) {
+      const resolvedDef: SoundDeclaration =
+        typeof def === 'string' && BUILTIN_SOUND_SOURCES[def]
+          ? BUILTIN_SOUND_SOURCES[def]
+          : def;
+
       if (!this.registry.has(id)) {
-        this.registry.set(id, def);
+        this.registry.set(id, resolvedDef);
       }
       if (namespace) {
-        this.registry.set(`${namespace}:${id}`, def);
+        this.registry.set(`${namespace}:${id}`, resolvedDef);
       } else {
-        this.registry.set(id, def);
+        this.registry.set(id, resolvedDef);
       }
-      const url = typeof def === 'string' ? def : def.url;
+
+      const url = this.extractUrl(resolvedDef);
       if (url && this.unlocked) {
         this.preloadUrl(url);
       }
     }
   }
 
-  /**
-   * Returns a planet-scoped sound interface so each planet's `ctx.sound.play(id, opts)`
-   * resolves its own declared sound IDs first before falling back to global IDs.
-   */
   public forPlanet(
     planetId: string,
     sounds?: Record<string, SoundDeclaration>
@@ -225,15 +327,11 @@ export class SpatialSoundEngine implements SoundAPI {
     };
   }
 
-  /**
-   * Plays the shared default low-end telescope sonar lock + mechanical gyro tick.
-   */
   public playDefaultClick(opts?: PlaySoundOptions): void {
     if (!this.unlocked || this.muted || !this.ctx || !this.masterGain) return;
     const { spatialNode, timeOffset } = this.buildSpatialOutput(opts?.at);
     const startTime = this.ctx.currentTime + timeOffset;
 
-    // 1. Crisp 18ms gyro tumbler transient
     this.playSynthRecipe(
       {
         type: 'triangle',
@@ -249,7 +347,6 @@ export class SpatialSoundEngine implements SoundAPI {
       opts
     );
 
-    // 2. Warm sub-bass sonar lock body
     this.playSynthRecipe(
       DEFAULT_ORBIT_CLICK_RECIPE,
       spatialNode,
@@ -258,9 +355,6 @@ export class SpatialSoundEngine implements SoundAPI {
     );
   }
 
-  /**
-   * Syncs the 3D Web Audio listener with the active Three.js camera each frame.
-   */
   public updateListener(camera: THREE.Camera): void {
     if (!this.ctx || !this.unlocked) return;
     const listener = this.ctx.listener;
@@ -291,9 +385,6 @@ export class SpatialSoundEngine implements SoundAPI {
     }
   }
 
-  /**
-   * Claude v1 Sound Hook: `ctx.sound.play(id, { at, volume, detune })`
-   */
   public play(id: string, opts?: PlaySoundOptions): void {
     if (!this.unlocked || this.muted || !this.ctx || !this.masterGain) {
       return;
@@ -309,7 +400,7 @@ export class SpatialSoundEngine implements SoundAPI {
       return;
     }
 
-    const def = this.registry.get(id);
+    const def = this.registry.get(id) ?? BUILTIN_SOUND_SOURCES[id];
     if (!def) {
       this.playDefaultClick(opts);
       return;
@@ -318,12 +409,105 @@ export class SpatialSoundEngine implements SoundAPI {
     const { spatialNode, timeOffset } = this.buildSpatialOutput(opts?.at);
     const startTime = this.ctx.currentTime + timeOffset;
 
-    const url = typeof def === 'string' ? def : def.url;
-    if (url) {
-      this.playUrlSound(url, spatialNode, startTime, opts);
-    } else if (typeof def === 'object') {
-      this.playSynthRecipe(def, spatialNode, startTime, opts);
+    if (typeof def === 'string') {
+      const preset = BUILTIN_SOUND_SOURCES[def];
+      if (preset) {
+        this.playSynthRecipe(preset, spatialNode, startTime, opts);
+        return;
+      }
+      if (VALID_OSC_WAVES.has(def as OscillatorWave)) {
+        this.playSynthRecipe(
+          { type: def as OscillatorWave, freq: 440, duration: 0.35 },
+          spatialNode,
+          startTime,
+          opts
+        );
+        return;
+      }
+      const url = this.extractUrl(def);
+      if (url) {
+        this.playUrlSound(url, spatialNode, startTime, opts);
+        return;
+      }
+      this.playDefaultClick(opts);
+      return;
     }
+
+    if (def.url) {
+      this.playUrlSound(def.url, spatialNode, startTime, opts);
+      return;
+    }
+
+    // If a recipe references a preset in `source` or `type` (e.g. source: 'twin-resonance')
+    const presetRef =
+      (def.source && BUILTIN_SOUND_SOURCES[def.source]) ||
+      (def.type && BUILTIN_SOUND_SOURCES[def.type]);
+    const mergedRecipe = presetRef ? { ...presetRef, ...def } : def;
+
+    this.playSynthRecipe(mergedRecipe, spatialNode, startTime, opts);
+  }
+
+  private extractCoords(
+    at?: PlaySoundOptions['at']
+  ): { x: number; y: number; z: number } | null {
+    if (!at || typeof at !== 'object') return null;
+
+    if (Array.isArray(at)) {
+      return { x: at[0], y: at[1], z: at[2] };
+    }
+
+    // Handle THREE.Object3D (has getWorldPosition or .position)
+    const maybeObj = at as Object3DLike;
+    if (typeof maybeObj.getWorldPosition === 'function') {
+      const target = {
+        x: 0,
+        y: 0,
+        z: 0,
+        set(nx: number, ny: number, nz: number) {
+          this.x = nx;
+          this.y = ny;
+          this.z = nz;
+          return this;
+        },
+        setFromMatrixPosition(m: { elements: number[] }) {
+          this.x = m.elements[12];
+          this.y = m.elements[13];
+          this.z = m.elements[14];
+          return this;
+        },
+      };
+      try {
+        maybeObj.getWorldPosition(target as unknown as Vec3Like);
+        return { x: target.x, y: target.y, z: target.z };
+      } catch {
+        if (maybeObj.position) {
+          return {
+            x: maybeObj.position.x,
+            y: maybeObj.position.y,
+            z: maybeObj.position.z,
+          };
+        }
+      }
+    }
+
+    if (maybeObj.position && typeof maybeObj.position.x === 'number') {
+      return {
+        x: maybeObj.position.x,
+        y: maybeObj.position.y,
+        z: maybeObj.position.z,
+      };
+    }
+
+    const maybeVec = at as Vec3Like;
+    if (
+      typeof maybeVec.x === 'number' &&
+      typeof maybeVec.y === 'number' &&
+      typeof maybeVec.z === 'number'
+    ) {
+      return { x: maybeVec.x, y: maybeVec.y, z: maybeVec.z };
+    }
+
+    return null;
   }
 
   private buildSpatialOutput(
@@ -340,31 +524,31 @@ export class SpatialSoundEngine implements SoundAPI {
       };
     }
 
-    if (at && typeof at === 'object') {
-      const x = Array.isArray(at) ? at[0] : at.x;
-      const y = Array.isArray(at) ? at[1] : at.y;
-      const z = Array.isArray(at) ? at[2] : at.z;
+    const coords = this.extractCoords(at);
+    if (
+      coords &&
+      Number.isFinite(coords.x) &&
+      Number.isFinite(coords.y) &&
+      Number.isFinite(coords.z)
+    ) {
+      const panner = this.ctx.createPanner();
+      panner.panningModel = 'HRTF';
+      panner.distanceModel = 'inverse';
+      panner.refDistance = 14;
+      panner.maxDistance = 260;
+      panner.rolloffFactor = 0.85;
 
-      if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
-        const panner = this.ctx.createPanner();
-        panner.panningModel = 'HRTF';
-        panner.distanceModel = 'inverse';
-        panner.refDistance = 14;
-        panner.maxDistance = 260;
-        panner.rolloffFactor = 0.85;
-
-        const now = this.ctx.currentTime;
-        if ('positionX' in panner && panner.positionX) {
-          panner.positionX.setValueAtTime(x, now);
-          panner.positionY.setValueAtTime(y, now);
-          panner.positionZ.setValueAtTime(z, now);
-        } else {
-          panner.setPosition(x, y, z);
-        }
-
-        panner.connect(this.masterGain);
-        return { spatialNode: panner, timeOffset: 0 };
+      const now = this.ctx.currentTime;
+      if ('positionX' in panner && panner.positionX) {
+        panner.positionX.setValueAtTime(coords.x, now);
+        panner.positionY.setValueAtTime(coords.y, now);
+        panner.positionZ.setValueAtTime(coords.z, now);
+      } else {
+        panner.setPosition(coords.x, coords.y, coords.z);
       }
+
+      panner.connect(this.masterGain);
+      return { spatialNode: panner, timeOffset: 0 };
     }
 
     return { spatialNode: this.masterGain, timeOffset: 0 };
@@ -378,12 +562,14 @@ export class SpatialSoundEngine implements SoundAPI {
   ): void {
     if (!this.ctx) return;
 
-    const wave: OscillatorWave = recipe.type ?? recipe.waveform ?? 'sine';
+    const wave: OscillatorWave = normalizeOscWave(
+      recipe.waveform ?? recipe.type ?? recipe.source
+    );
     const baseFreq = recipe.freq ?? recipe.frequency ?? 440;
     const endFreq = recipe.endFreq ?? recipe.frequencyEnd;
     const notes =
       recipe.notes && recipe.notes.length > 0 ? recipe.notes : [baseFreq];
-    const step = recipe.noteStep ?? 0.065;
+    const step = recipe.noteStep ?? 0.055;
 
     const duration = Math.max(0.025, recipe.duration ?? 0.36);
     const attack = Math.max(0.003, recipe.attack ?? 0.014);

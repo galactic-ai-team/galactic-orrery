@@ -2,6 +2,8 @@
 
 A Three.js 3D solar system built by the **Galactic AI Team**. A glowing star sits at the center, and each of the six agents builds and owns **one animated planet** (its own shader, motion, sound, and click interaction). Lumi integrates everything and deploys it.
 
+Live: https://galactic-orrery.vercel.app
+
 Drag to orbit, scroll to zoom, click a planet.
 
 ## Ownership
@@ -12,8 +14,8 @@ Drag to orbit, scroll to zoom, click a planet.
 | GPT-6  | **Crystalline ringed planet**: animated rings, reactive shaders, clickable core (`src/planets/gpt6`) |
 | Claude | **Plugin interface** (`src/planets/types.ts`), starter template, perf budget and CI (`src/planets/claude`) |
 | Gemini | **Twin-moon "Castor & Pollux" planet** plus the **spatial sound engine** (`src/planets/gemini`) |
-| Dee    | TBD (`src/planets/dee`) |
-| Nova   | TBD (`src/planets/nova`) |
+| Dee    | **Tide-locked ocean planet** plus a shared **comet particle module** (`src/planets/dee`) |
+| Nova   | **Violet aurora star-planet** with an 11-star constellation ring, the **Starfall Comet** (comet split with Dee to be settled), and the camera-tour stop script (`src/planets/nova`) |
 
 Non-Lumi planets start out as grey wireframe placeholders. Each owner replaces their own `index.ts`.
 

@@ -23,6 +23,9 @@ export class PlanetRegistry {
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private downAt = new THREE.Vector2();
+  private upAt = new THREE.Vector2();
+  private orbitLines: THREE.LineLoop[] = [];
+  private listeners: Array<[keyof HTMLElementEventMap, (e: PointerEvent) => void]> = [];
 
   private textureLoader = new THREE.TextureLoader();
   private textureCache = new Map<string, Promise<THREE.Texture>>();
@@ -54,7 +57,9 @@ export class PlanetRegistry {
       if (module.axialTilt) body.rotation.z = module.axialTilt;
       body.userData.planetId = module.id;
       pivot.add(body);
-      pivot.add(makeOrbitLine(module.orbitRadius));
+      const line = makeOrbitLine(module.orbitRadius);
+      this.orbitLines.push(line);
+      pivot.add(line);
       host.scene.add(pivot);
       if (import.meta.env.DEV) {
         const audit = auditPlanet(body, this.quality);
@@ -66,14 +71,16 @@ export class PlanetRegistry {
     });
 
     const el = host.renderer.domElement;
-    el.addEventListener('pointermove', (e) => this.handleHover(e.clientX, e.clientY));
-
-    el.addEventListener('pointerdown', (e) => this.downAt.set(e.clientX, e.clientY));
-    el.addEventListener('pointerup', (e) => {
-      // Ignore drags (OrbitControls) — only treat near-stationary releases as clicks.
-      if (this.downAt.distanceTo(new THREE.Vector2(e.clientX, e.clientY)) > 5) return;
-      this.handleClick(e.clientX, e.clientY);
-    });
+    this.listeners = [
+      ['pointermove', (e) => this.handleHover(e.clientX, e.clientY)],
+      ['pointerdown', (e) => this.downAt.set(e.clientX, e.clientY)],
+      ['pointerup', (e) => {
+        // Ignore drags (OrbitControls) — only treat near-stationary releases as clicks.
+        if (this.downAt.distanceTo(this.upAt.set(e.clientX, e.clientY)) > 5) return;
+        this.handleClick(e.clientX, e.clientY);
+      }],
+    ];
+    for (const [type, fn] of this.listeners) el.addEventListener(type, fn as EventListener);
   }
 
   private hovered?: Mounted;
@@ -131,6 +138,16 @@ export class PlanetRegistry {
       this.host.scene.remove(m.pivot);
     }
     this.mounted = [];
+    const el = this.host.renderer.domElement;
+    for (const [type, fn] of this.listeners) el.removeEventListener(type, fn as EventListener);
+    this.listeners = [];
+    el.style.cursor = '';
+    this.hovered = undefined;
+    for (const line of this.orbitLines) {
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+    this.orbitLines = [];
     for (const p of this.textureCache.values()) p.then((t) => t.dispose()).catch(() => {});
     this.textureCache.clear();
   }

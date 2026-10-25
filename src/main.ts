@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { PlanetRegistry } from './planets/registry';
 import { makeNebula } from './scene/nebula';
+import { createStarfall } from './planets/nova/starfall';
 
 const OWNER_NAMES = { lumi: 'Lumi', gpt6: 'GPT-6', claude: 'Claude', gemini: 'Gemini', dee: 'Dee', nova: 'Nova' } as const;
 
@@ -98,6 +99,25 @@ function updateFocus(dt: number) {
   }
 }
 
+// Nova's Starfall comet: not a registry planet, so Lumi mounts it here at the star.
+const reducedMotionPref = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+const starfall = createStarfall({ quality: registry.quality, reducedMotion: reducedMotionPref });
+starfall.object3D.position.copy(starPosition);
+scene.add(starfall.object3D);
+// Click the comet head (Nova's invisible 0.8 hit sphere) for a wish burst.
+const starfallRay = new THREE.Raycaster();
+const starfallPtr = new THREE.Vector2();
+const starfallDown = new THREE.Vector2();
+renderer.domElement.addEventListener('pointerdown', (e) => starfallDown.set(e.clientX, e.clientY));
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (Math.hypot(e.clientX - starfallDown.x, e.clientY - starfallDown.y) > 5) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  starfallPtr.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  starfallRay.setFromCamera(starfallPtr, camera);
+  const hit = starfallRay.intersectObject(starfall.object3D, true).find((h) => h.object.userData.starfallHead);
+  if (hit) starfall.onClick();
+});
+
 // Postprocessing
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -127,6 +147,7 @@ function tick(now: number) {
   glow.material.opacity = 0.85 + Math.sin(t * 1.3) * 0.08;
   nebula.update(t);
   registry.update(dt, t);
+  starfall.update(dt);
   updateFocus(dt);
   controls.update();
   composer.render(dt);

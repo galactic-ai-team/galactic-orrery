@@ -96,7 +96,7 @@ function randomUnitVector(): THREE.Vector3 {
 const planet: PlanetModule = {
   id: 'nova',
   displayName: 'Nova',
-  owner: 'Nova',
+  owner: 'nova',
   orbitRadius: 32.5,
   orbitSpeed: 0.04,
 

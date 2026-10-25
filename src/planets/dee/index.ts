@@ -7,7 +7,7 @@ let mesh: THREE.Mesh | undefined;
 const planet: PlanetModule = {
   id: 'dee',
   displayName: 'Dee (placeholder)',
-  owner: 'Dee',
+  owner: 'dee',
   orbitRadius: 28,
   orbitSpeed: 0.05,
   create() {

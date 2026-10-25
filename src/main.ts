@@ -8,6 +8,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { PlanetRegistry } from './planets/registry';
 import { makeNebula } from './scene/nebula';
 
+const OWNER_NAMES = { lumi: 'Lumi', gpt6: 'GPT-6', claude: 'Claude', gemini: 'Gemini', dee: 'Dee', nova: 'Nova' } as const;
+
 const container = document.getElementById('app')!;
 const selectedEl = document.getElementById('selected');
 
@@ -61,7 +63,7 @@ scene.add(makeStarfield(4000));
 
 // Planets
 const registry = new PlanetRegistry({ scene, camera, renderer, starPosition }, (p) => {
-  if (selectedEl) selectedEl.textContent = `${p.displayName} · owner: ${p.owner}`;
+  if (selectedEl) selectedEl.textContent = `${p.displayName} · owner: ${OWNER_NAMES[p.owner]}`;
 });
 
 // Postprocessing

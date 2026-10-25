@@ -67,7 +67,6 @@ const FRAG = /* glsl */ `
 `;
 
 // Module-level mutable state, set in create(), read in update/onClick/dispose.
-let groupRef: THREE.Group | null = null;
 let matRef: THREE.ShaderMaterial | null = null;
 let meshRef: THREE.Mesh | null = null;
 let haloRef: THREE.Mesh | null = null;
@@ -115,7 +114,6 @@ const planet: PlanetModule = {
     );
     g.add(halo);
 
-    groupRef = g;
     matRef = mat;
     meshRef = mesh;
     haloRef = halo;
@@ -153,7 +151,7 @@ const planet: PlanetModule = {
   onClick(_e: PlanetClickEvent): void {
     clickedAt = planetTime;
     if (reducedMotion) return;
-    ctxRef?.sound?.play?.('dee.click', { volume: 0.15 });
+    ctxRef?.sound.play('dee.click', { volume: 0.15 });
   },
 
   dispose(): void {
@@ -162,7 +160,6 @@ const planet: PlanetModule = {
     haloRef?.geometry.dispose();
     matRef?.dispose();
 
-    groupRef = null;
     matRef = null;
     meshRef = null;
     haloRef = null;

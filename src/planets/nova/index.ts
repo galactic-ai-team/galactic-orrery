@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 
 import type { PlanetModule } from '../types';
+import { STARFALL_CHIME } from './starfall';
 
 const PLANET_RADIUS = 1.1;
 const RING_RADIUS = 1.9;
@@ -100,6 +101,11 @@ const planet: PlanetModule = {
   apiVersion: 1,
   description: 'A violet aurora star-planet wrapped in an 11-star constellation ring. Click it and the stars light up in order.',
   radius: 2.1,
+  sounds: {
+    // Declared here so the engine preloads it; Starfall (same owner)
+    // plays it via the sound option passed to createStarfall().
+    'starfall-chime': { synth: STARFALL_CHIME },
+  },
   orbitRadius: 32.5,
   orbitSpeed: 0.04,
 

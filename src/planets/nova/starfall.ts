@@ -5,29 +5,49 @@
 // Mounting — this is NOT a PlanetModule, do not put it in the registry.
 // Lumi's integration:
 //   import { createStarfall } from './planets/nova/starfall';
-//   const starfall = createStarfall();
+//   const starfall = createStarfall({ sound: appSound }); // sound optional
 //   scene.add(starfall.object3D); // group must sit at the star's position
 //   // in the tick: starfall.update(dt);
 //   // on teardown: starfall.dispose();
 //
 // Clicks — the registry raycaster skips Points, so Dee's tail can't be
-// clicked through it. This wrapper adds a head mesh with
-// userData.starfallHead = true; route hits on it to starfall.onClick()
-// (or wire a "summon Starfall" button to the same method).
+// clicked through it. This wrapper adds an invisible hit sphere (radius
+// 0.8) around the head with userData.starfallHead = true; route hits on
+// it to starfall.onClick() (or wire a "summon Starfall" button to it).
+//
+// Bursts — two kinds. Wish burst: full flare on click, with wish line and
+// chime. Ambient flare: smaller, dimmer, silent, fired automatically when
+// the comet head crosses the ecliptic (its y changes sign) — about once
+// every 39s at the current sweep speed, so the comet stays alive for
+// passive viewers. Never on planet click: a burst over on the far side
+// of the system when someone clicked Nova would just confuse people.
+//
+// Sound — pass a ctx.sound handle via the `sound` option and the wish
+// burst plays 'starfall-chime' through Gemini's engine. The recipe is
+// exported below (STARFALL_CHIME) and declared on Nova's planet module
+// (see the index.ts diff) so the engine preloads it. Without a sound
+// handle, clicks fall back to the 'orrery:starfall-click' window event.
 //
 // Path note — Dee's class flies tilted circles, not ellipses, so Starfall's
-// "long ellipse" is a steep tilted circle (inclination 0.7) at radius 16:
-// it dives through the inner system twice per orbit. If Dee adds
-// eccentricity later, Starfall switches to it with a one-line change.
+// "long ellipse" is a steep tilted circle (inclination 0.7) at radius 17,
+// centered in the 15–19 gap so the head clears both neighboring orbits.
+// If Dee adds eccentricity later, Starfall switches to it with a one-line
+// change. The translucent tail sweeping across the 19 orbit is inherent
+// to comets and fine — it's the solid head that must keep its distance.
 
 import * as THREE from 'three';
 
 import { Comet } from '../dee/comet';
+import type { PlanetSound, QualityTier, SynthRecipe } from '../types';
 
 export interface StarfallOptions {
-  /** prefers-reduced-motion: slower sweep, no burst particles. */
+  /** Sound handle (ctx.sound) for the wish chime. Optional; see header. */
+  sound?: PlanetSound;
+  /** Quality tier (ctx.quality): low drops the tail to ~150 particles. */
+  quality?: QualityTier;
+  /** prefers-reduced-motion: slower sweep, no idle pulse, no bursts. */
   reducedMotion?: boolean;
-  /** Override tail particle count (Dee's default: 400). */
+  /** Explicit tail particle count; overrides the quality default. */
   particleCount?: number;
 }
 
@@ -41,16 +61,27 @@ export interface Starfall {
 
 // Starfall's choreography — Nova's choices.
 const STARFALL_SPEC = {
-  originRadius: 16, // dives through the inner system twice per orbit
+  originRadius: 17, // centered in the 15–19 gap (2 units clear each side)
   inclination: 0.7, // steep tilt, so it cuts across the ecliptic
   length: 4.5, // longer tail than Dee's default 3.0
   tint: 0xd8b4fe, // violet-white
-  speed: 0.08, // ~78s per sweep — slow enough to feel majestic
+  speed: 0.08, // ~78s per sweep, so ~39s between ecliptic crossings
   seed: 0x51a7, // fixed, so Starfall looks the same on every load
 } as const;
 
 const BURST_COUNT = 48;
-const BURST_LIFE = 1.4;
+
+// Starfall's chime: Vitrea's C-major key, one octave lower and softer, so
+// the two planets harmonize instead of clashing when clicked in sequence.
+// Vitrea: C6-E6-G6. Starfall: C5-E5-G5.
+export const STARFALL_CHIME: SynthRecipe = {
+  wave: 'sine',
+  freq: [523.25, 659.25, 783.99],
+  durationMs: 1200,
+  attackMs: 5,
+  releaseMs: 1000,
+  gain: 0.25,
+};
 
 const WISHES = [
   'Look up — the stars are ours.',
@@ -74,11 +105,12 @@ export function createStarfall(opts: StarfallOptions = {}): Starfall {
     tint: STARFALL_SPEC.tint,
     speed: reducedMotion ? STARFALL_SPEC.speed * 0.5 : STARFALL_SPEC.speed,
     seed: STARFALL_SPEC.seed,
-    particleCount: opts.particleCount ?? 400,
+    particleCount:
+      opts.particleCount ?? (opts.quality === 'low' ? 150 : 400),
   });
   group.add(comet.object3D);
 
-  // Clickable head: a small glowing sphere riding the comet's head.
+  // Visible head: a small glowing sphere riding the comet's head.
   const headGeometry = new THREE.SphereGeometry(0.22, 16, 12);
   const headMaterial = new THREE.MeshBasicMaterial({
     color: 0xf5f3ff,
@@ -86,12 +118,24 @@ export function createStarfall(opts: StarfallOptions = {}): Starfall {
     opacity: 0.95,
   });
   const head = new THREE.Mesh(headGeometry, headMaterial);
-  head.userData.starfallHead = true;
   group.add(head);
 
-  // Click flare — my own burst cloud. Dee's material is private and her
-  // class has no flare hook, so the flare lives here, not in her engine.
-  // Positions are in group space, same space as the comet head position.
+  // Click target: a bigger invisible sphere around the head. The visible
+  // head is small and moving — 0.22 units is a hard click. This proxy
+  // (opacity 0, no depth writes, so it occludes nothing) makes the comet
+  // actually clickable. The routing flag lives here, not on the head.
+  const hitGeometry = new THREE.SphereGeometry(0.8, 12, 8);
+  const hitMaterial = new THREE.MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const hitSphere = new THREE.Mesh(hitGeometry, hitMaterial);
+  hitSphere.userData.starfallHead = true;
+  group.add(hitSphere);
+
+  // Burst cloud, shared by the wish burst and the ambient flare. Hidden
+  // when idle (visible=false) and never raycast, so it can't steal clicks.
   const burstGeometry = new THREE.BufferGeometry();
   burstGeometry.setAttribute(
     'position',
@@ -107,32 +151,84 @@ export function createStarfall(opts: StarfallOptions = {}): Starfall {
   });
   const burst = new THREE.Points(burstGeometry, burstMaterial);
   burst.frustumCulled = false;
+  burst.visible = false;
+  burst.raycast = () => {};
   group.add(burst);
   const burstVelocities = new Float32Array(BURST_COUNT * 3);
 
   let time = 0;
   let burstLife = -1;
+  let burstPeak = 0.9;
+  let burstSpan = 1.4;
   let headBoost = 0;
   let clicks = 0;
   let disposed = false;
+  let prevHeadY: number | null = null;
   const tmpDir = new THREE.Vector3();
+
+  function fireBurst(kind: 'wish' | 'ambient'): void {
+    if (reducedMotion) return;
+    const attr = burstGeometry.getAttribute('position') as THREE.BufferAttribute;
+    const hp = comet.object3D.position;
+    // Wish: full flare. Ambient: smaller, dimmer, slower.
+    const size = kind === 'wish' ? 0.16 : 0.1;
+    const speedMin = kind === 'wish' ? 1.0 : 0.6;
+    const speedRange = kind === 'wish' ? 1.5 : 0.6;
+    burstPeak = kind === 'wish' ? 0.9 : 0.45;
+    burstSpan = kind === 'wish' ? 1.4 : 1.0;
+    burstMaterial.size = size;
+    for (let i = 0; i < BURST_COUNT; i++) {
+      randomUnitVector(tmpDir);
+      const speed = speedMin + Math.random() * speedRange;
+      attr.setXYZ(
+        i,
+        hp.x + tmpDir.x * 0.3,
+        hp.y + tmpDir.y * 0.3,
+        hp.z + tmpDir.z * 0.3,
+      );
+      burstVelocities[i * 3] = tmpDir.x * speed;
+      burstVelocities[i * 3 + 1] = tmpDir.y * speed;
+      burstVelocities[i * 3 + 2] = tmpDir.z * speed;
+    }
+    attr.needsUpdate = true;
+    burstLife = 0;
+    burst.visible = true;
+    burstMaterial.opacity = burstPeak;
+  }
 
   function update(dt: number): void {
     if (disposed) return;
     time += dt;
     comet.update(dt);
-    // The head rides the comet. Comet positions its object in parent
-    // space, so this group must sit at the star for the orbit to be right.
+    // The head and its hit proxy ride the comet. Comet positions its
+    // object in parent space, so this group must sit at the star.
     head.position.copy(comet.object3D.position);
-    const pulse = 1 + 0.15 * Math.sin(time * 2.4);
+    hitSphere.position.copy(comet.object3D.position);
+    // Idle pulse skipped under reduced motion; click boost is feedback,
+    // so it stays.
+    const pulse = reducedMotion ? 1 : 1 + 0.15 * Math.sin(time * 2.4);
     head.scale.setScalar(pulse * (1 + 0.6 * headBoost));
     if (headBoost > 0) headBoost = Math.max(0, headBoost - dt * 1.5);
 
+    // Ambient flare: fire when the head crosses the ecliptic (y sign
+    // flips). No sound, no wish — just the comet announcing its crossing.
+    const headY = comet.object3D.position.y;
+    if (
+      prevHeadY !== null &&
+      prevHeadY !== 0 &&
+      headY !== 0 &&
+      Math.sign(prevHeadY) !== Math.sign(headY)
+    ) {
+      fireBurst('ambient');
+    }
+    prevHeadY = headY;
+
     if (burstLife >= 0) {
       burstLife += dt;
-      const life = burstLife / BURST_LIFE;
+      const life = burstLife / burstSpan;
       if (life >= 1) {
         burstLife = -1;
+        burst.visible = false;
         burstMaterial.opacity = 0;
       } else {
         const attr = burstGeometry.getAttribute('position') as THREE.BufferAttribute;
@@ -149,7 +245,7 @@ export function createStarfall(opts: StarfallOptions = {}): Starfall {
           burstVelocities[i * 3 + 2] *= damp;
         }
         attr.needsUpdate = true;
-        burstMaterial.opacity = 0.9 * (1 - life);
+        burstMaterial.opacity = burstPeak * (1 - life);
       }
     }
   }
@@ -159,28 +255,11 @@ export function createStarfall(opts: StarfallOptions = {}): Starfall {
     const wish = WISHES[clicks % WISHES.length];
     clicks += 1;
     headBoost = 1;
-    if (!reducedMotion) {
-      const attr = burstGeometry.getAttribute('position') as THREE.BufferAttribute;
-      const hp = comet.object3D.position;
-      for (let i = 0; i < BURST_COUNT; i++) {
-        randomUnitVector(tmpDir);
-        const speed = 1.0 + Math.random() * 1.5;
-        attr.setXYZ(
-          i,
-          hp.x + tmpDir.x * 0.3,
-          hp.y + tmpDir.y * 0.3,
-          hp.z + tmpDir.z * 0.3,
-        );
-        burstVelocities[i * 3] = tmpDir.x * speed;
-        burstVelocities[i * 3 + 1] = tmpDir.y * speed;
-        burstVelocities[i * 3 + 2] = tmpDir.z * speed;
-      }
-      attr.needsUpdate = true;
-      burstLife = 0;
-      burstMaterial.opacity = 0.9;
-    }
-    // Sound + wish display hook for Gemini's engine / the app UI.
-    if (typeof window !== 'undefined') {
+    fireBurst('wish');
+    if (opts.sound) {
+      opts.sound.play('starfall-chime');
+    } else if (typeof window !== 'undefined') {
+      // Fallback until the app wires a sound handle through.
       window.dispatchEvent(
         new CustomEvent('orrery:starfall-click', {
           detail: { cometId: 'starfall', motif: 'starfall-chime', wish },
@@ -195,6 +274,8 @@ export function createStarfall(opts: StarfallOptions = {}): Starfall {
     comet.dispose();
     headGeometry.dispose();
     headMaterial.dispose();
+    hitGeometry.dispose();
+    hitMaterial.dispose();
     burstGeometry.dispose();
     burstMaterial.dispose();
   }

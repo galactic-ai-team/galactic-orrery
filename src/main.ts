@@ -62,9 +62,41 @@ scene.add(nebula.mesh);
 scene.add(makeStarfield(4000));
 
 // Planets
+// Focus camera: clicking a planet glides the view to it and follows its orbit; Esc returns to the star.
+let focusId: string | undefined;
+const focusTarget = new THREE.Vector3();
+const lastFocus = new THREE.Vector3();
 const registry = new PlanetRegistry({ scene, camera, renderer, starPosition }, (p) => {
-  if (selectedEl) selectedEl.textContent = `${p.displayName} · owner: ${OWNER_NAMES[p.owner]}`;
+  if (selectedEl) selectedEl.textContent = `${p.displayName} · owner: ${OWNER_NAMES[p.owner]} · Esc to zoom out`;
+  if (focusId !== p.id) {
+    focusId = p.id;
+    registry.getBody(p.id)?.getWorldPosition(lastFocus);
+  }
 });
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !focusId) return;
+  focusId = undefined;
+  if (selectedEl) selectedEl.textContent = '';
+});
+function updateFocus(dt: number) {
+  const k = 1 - Math.exp(-dt * 4);
+  if (focusId) {
+    const body = registry.getBody(focusId);
+    if (!body) return;
+    body.getWorldPosition(focusTarget);
+    // Carry the camera along with the planet's orbit so the framing holds.
+    camera.position.add(focusTarget.clone().sub(lastFocus));
+    lastFocus.copy(focusTarget);
+    controls.target.lerp(focusTarget, k);
+    // Glide in to a close-up distance instead of jumping.
+    const off = camera.position.clone().sub(focusTarget);
+    const d = off.length();
+    const want = Math.min(Math.max(d, 9), 14);
+    camera.position.copy(focusTarget).add(off.setLength(d + (want - d) * k));
+  } else {
+    controls.target.lerp(starPosition, k);
+  }
+}
 
 // Postprocessing
 const composer = new EffectComposer(renderer);
@@ -95,6 +127,7 @@ function tick(now: number) {
   glow.material.opacity = 0.85 + Math.sin(t * 1.3) * 0.08;
   nebula.update(t);
   registry.update(dt, t);
+  updateFocus(dt);
   controls.update();
   composer.render(dt);
   requestAnimationFrame(tick);

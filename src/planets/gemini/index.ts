@@ -4,9 +4,8 @@
  * Orbit Radius: 23.5 (per Lumi's orbital chart)
  * Credits & Integration:
  *  - Built strictly against Claude's v1 PlanetModule spec (src/planets/types.ts)
- *  - Fixes PR #7 strict TS build:
- *      1) Uses a valid SoundSource ('twin-resonance' added to engine.ts + synth recipe)
- *      2) Passes `root` (THREE.Object3D) instead of THREE.Vector3 to `at` in ctx.sound.play()
+ *  - Uses exact SoundSource typing: { synth: { wave, freq, durationMs, attackMs, releaseMs, gain } }
+ *  - Twin resonance polychord frequency stack: F4, C5, G5, A5, D6 ([349.23, 523.25, 783.99, 880.0, 1174.66])
  */
 
 import * as THREE from 'three';
@@ -93,6 +92,11 @@ const BRIDGE_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
+let activeRoot: THREE.Group | null = null;
+let activeUpdateFn: ((dt: number, elapsed?: number) => void) | null = null;
+let activeClickFn: () => void = () => {};
+let activeDisposeFn: () => void = () => {};
+
 export const geminiPlanet: PlanetModule = {
   id: 'gemini',
   name: 'Castor & Pollux',
@@ -104,19 +108,28 @@ export const geminiPlanet: PlanetModule = {
   description:
     'A tidally locked binary twin world at 23.5 AU—Castor (cyan crystalline logic) and Pollux (amber creative spark)—linked by a glowing Roche-lobe plasma bridge.',
   sounds: {
-    'twin-resonance': 'twin-resonance',
+    'twin-resonance': {
+      synth: {
+        wave: 'triangle',
+        freq: [349.23, 523.25, 783.99, 880.0, 1174.66],
+        durationMs: 580,
+        attackMs: 16,
+        releaseMs: 500,
+        gain: 0.32,
+      },
+    },
   },
 
   create(ctx) {
     const root = new THREE.Group();
     root.name = 'planet-gemini';
+    activeRoot = root;
 
     const barycenter = new THREE.Group();
     root.add(barycenter);
 
     const sphereGeo = new THREE.SphereGeometry(0.68, 48, 48);
 
-    // 1. Castor (Cyan Logic Twin)
     const castorUniforms = {
       uTime: { value: 0 },
       uSurge: { value: 0 },
@@ -133,7 +146,6 @@ export const geminiPlanet: PlanetModule = {
     castorMesh.position.set(-1.05, 0, 0);
     barycenter.add(castorMesh);
 
-    // 2. Pollux (Amber Creative Twin)
     const polluxUniforms = {
       uTime: { value: 0 },
       uSurge: { value: 0 },
@@ -150,7 +162,6 @@ export const geminiPlanet: PlanetModule = {
     polluxMesh.position.set(1.05, 0, 0);
     barycenter.add(polluxMesh);
 
-    // 3. Roche-Lobe Plasma Bridge
     const bridgeUniforms = {
       uTime: { value: 0 },
       uSurge: { value: 0 },
@@ -169,7 +180,6 @@ export const geminiPlanet: PlanetModule = {
     const bridgeMesh = new THREE.Mesh(bridgeGeo, bridgeMat);
     barycenter.add(bridgeMesh);
 
-    // 4. Harmonic Orbital Dust Ring (600 particles)
     const count = 600;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
@@ -210,7 +220,7 @@ export const geminiPlanet: PlanetModule = {
     let elapsedTotal = 0;
     let clickStep = 0;
 
-    const stepSimulation = (dtRaw: number, timeRaw?: number) => {
+    activeUpdateFn = (dtRaw: number, timeRaw?: number) => {
       const dt = Math.min(Math.max(dtRaw || 0.016, 0.001), 0.1);
       elapsedTotal = typeof timeRaw === 'number' ? timeRaw : elapsedTotal + dt;
       surge = Math.max(0, surge - dt * 1.4);
@@ -237,19 +247,18 @@ export const geminiPlanet: PlanetModule = {
       bridgeUniforms.uSurge.value = surge;
     };
 
-    const handlePlanetClick = (clickCtx?: typeof ctx) => {
+    activeClickFn = () => {
       surge = 1.0;
       clickStep += 1;
       const detune = ((clickStep % 5) - 2) * 100;
-      // Passes `root` (THREE.Group -> THREE.Object3D) to satisfy strict Object3D typing on `at`
-      (clickCtx ?? ctx)?.sound?.play('twin-resonance', {
+      ctx?.sound?.play('twin-resonance', {
         at: root,
         volume: 0.9,
         detune,
       });
     };
 
-    const cleanup = () => {
+    activeDisposeFn = () => {
       sphereGeo.dispose();
       castorMat.dispose();
       polluxMat.dispose();
@@ -259,42 +268,20 @@ export const geminiPlanet: PlanetModule = {
       ringMat.dispose();
     };
 
-    root.userData.update = (dt: number, elapsed?: number) =>
-      stepSimulation(dt, elapsed);
-    root.userData.onClick = () => handlePlanetClick(ctx);
-    root.userData.dispose = cleanup;
+    return root;
+  },
 
-    return Object.assign(root, {
-      group: root,
-      mesh: root,
-      object3d: root,
-      update: (arg1: unknown, arg2?: unknown) => {
-        if (typeof arg1 === 'number') {
-          const isDeltaFirst = arg1 < 1.0;
-          const dt = isDeltaFirst
-            ? arg1
-            : typeof arg2 === 'number'
-            ? arg2
-            : 0.016;
-          const elapsed = isDeltaFirst
-            ? typeof arg2 === 'number'
-              ? arg2
-              : undefined
-            : arg1;
-          stepSimulation(dt, elapsed);
-        } else if (arg1 && typeof arg1 === 'object') {
-          const obj = arg1 as {
-            dt?: number;
-            delta?: number;
-            elapsed?: number;
-            time?: number;
-          };
-          stepSimulation(obj.dt ?? obj.delta ?? 0.016, obj.elapsed ?? obj.time);
-        }
-      },
-      onClick: (clickCtx?: typeof ctx) => handlePlanetClick(clickCtx),
-      dispose: cleanup,
-    }) as unknown as ReturnType<PlanetModule['create']>;
+  update(dt, elapsed) {
+    activeUpdateFn?.(dt, elapsed);
+  },
+
+  onClick(ctx) {
+    activeClickFn?.();
+  },
+
+  dispose() {
+    activeDisposeFn?.();
+    activeRoot = null;
   },
 };
 
